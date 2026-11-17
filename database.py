@@ -1,32 +1,47 @@
 
 import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./attendpro.db")
 
-# Render PostgreSQL compatibility
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "sqlite:///./attendpro.db",
+)
+
+# Render PostgreSQL compatibility with psycopg 3
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
-        "postgres://", "postgresql://", 1
+        "postgres://",
+        "postgresql+psycopg://",
+        1,
+    )
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://",
+        "postgresql+psycopg://",
+        1,
     )
 
-connect_args = (
-    {"check_same_thread": False}
-    if DATABASE_URL.startswith("sqlite")
-    else {}
-)
+engine_options = {
+    "pool_pre_ping": True,
+}
+
+if DATABASE_URL.startswith("sqlite"):
+    engine_options["connect_args"] = {
+        "check_same_thread": False
+    }
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args=connect_args,
-    pool_pre_ping=True
+    **engine_options,
 )
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
-    bind=engine
+    bind=engine,
 )
 
 Base = declarative_base()
@@ -41,5 +56,9 @@ def get_db():
 
 
 def init_db():
-    from models import Company, Workflow, Project, ProjectLocation, Worker, Attendance
+    # Import all models before creating database tables.
+    import models
+    import users
+    import audit
+
     Base.metadata.create_all(bind=engine)
