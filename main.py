@@ -6,11 +6,12 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from database import init_db
+from companies import router as companies_router
+from login import router as auth_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables when the application starts.
     init_db()
     yield
 
@@ -22,6 +23,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Connect API routers
+app.include_router(auth_router)
+app.include_router(companies_router)
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -32,33 +37,12 @@ def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>AttendPro</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background: #f3f6fa;
-                margin: 0;
-                padding: 40px 16px;
-                text-align: center;
-            }
-            .card {
-                max-width: 600px;
-                margin: 40px auto;
-                padding: 32px;
-                background: white;
-                border-radius: 16px;
-                box-shadow: 0 4px 18px rgba(0,0,0,.08);
-            }
-            h1 { color: #174a75; }
-            p { color: #526171; }
-        </style>
     </head>
-    <body>
-        <div class="card">
-            <h1>AttendPro</h1>
-            <h2>Smart Workforce & Attendance Management System</h2>
-            <p>Workforce attendance and GPS verification platform.</p>
-            <p>Application is running.</p>
-        </div>
+    <body style="font-family:Arial;text-align:center;padding:40px;">
+        <h1>AttendPro</h1>
+        <h2>Smart Workforce & Attendance Management System</h2>
+        <p>Workforce attendance and GPS verification platform.</p>
+        <p>Application is running.</p>
     </body>
     </html>
     """
