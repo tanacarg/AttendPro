@@ -9,6 +9,7 @@ from database import get_db
 from models import Company
 from schemas import CompanyCreate, CompanyResponse
 from audit import write_audit_log
+from dependencies import get_current_user, require_roles
 
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
@@ -35,7 +36,13 @@ def generate_company_code(db: Session) -> str:
     )
 
 
-@router.post("/register", response_model=CompanyResponse, status_code=201)
+# Public company registration.
+# New companies remain inactive until Super Admin approval.
+@router.post(
+    "/register",
+    response_model=CompanyResponse,
+    status_code=201,
+)
 def register_company(
     data: CompanyCreate,
     db: Session = Depends(get_db),
@@ -55,12 +62,14 @@ def register_company(
     return company
 
 
-# Authentication and Super Admin role checks
-# MUST be added before production use.
+# Only Platform Super Admin can view the company directory.
 @router.get("/directory")
 def company_directory(
     company_code: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    admin=Depends(
+        require_roles("PLATFORM_SUPER_ADMIN")
+    ),
 ):
     query = db.query(Company)
 
@@ -69,7 +78,9 @@ def company_directory(
             Company.company_code == company_code
         )
 
-    companies = query.order_by(Company.id.desc()).all()
+    companies = query.order_by(
+        Company.id.desc()
+    ).all()
 
     return [
         {
@@ -78,22 +89,30 @@ def company_directory(
             "company_code": item.company_code,
             "is_active": item.is_active,
             "is_approved": item.is_approved,
+            "logo_url": item.logo_url,
         }
         for item in companies
     ]
 
 
+# Only Platform Super Admin can approve a company.
 @router.post("/{company_id}/approve")
 def approve_company(
     company_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(
+        require_roles("PLATFORM_SUPER_ADMIN")
+    ),
 ):
     company = db.query(Company).filter(
         Company.id == company_id
     ).first()
 
     if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Company not found",
+        )
 
     company.is_approved = True
     company.is_active = True
@@ -101,6 +120,8 @@ def approve_company(
     write_audit_log(
         db,
         action="COMPANY_APPROVED",
+        actor_id=admin.id,
+        actor_role=admin.role,
         company_id=company.id,
         target_type="Company",
         target_id=company.id,
@@ -109,30 +130,42 @@ def approve_company(
 
     db.commit()
 
-    return {"message": "Company approved", "company_code": company.company_code}
+    return {
+        "message": "Company approved",
+        "company_code": company.company_code,
+    }
 
 
+# Only Platform Super Admin can deactivate a company.
 @router.post("/{company_id}/deactivate")
 def deactivate_company(
     company_id: int,
     db: Session = Depends(get_db),
+    admin=Depends(
+        require_roles("PLATFORM_SUPER_ADMIN")
+    ),
 ):
     company = db.query(Company).filter(
         Company.id == company_id
     ).first()
 
     if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Company not found",
+        )
 
     company.is_active = False
 
     write_audit_log(
         db,
         action="COMPANY_DEACTIVATED",
+        actor_id=admin.id,
+        actor_role=admin.role,
         company_id=company.id,
         target_type="Company",
         target_id=company.id,
-        description="Company deactivated",
+        description="Company deactivated; records preserved",
     )
 
     db.commit()
