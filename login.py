@@ -1,4 +1,6 @@
 
+import os
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,7 +11,7 @@ from sqlalchemy import func
 from database import get_db
 from users import User
 from models import Company
-from auth import verify_password, create_access_token
+from auth import verify_password, create_access_token, hash_password
 
 
 router = APIRouter(
@@ -31,6 +33,12 @@ class LoginResponse(BaseModel):
     expires_in_minutes: int = 30
 
 
+class BootstrapAdminRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=100)
+    password: str = Field(..., min_length=12)
+    bootstrap_key: str = Field(..., min_length=32)
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     request: LoginRequest,
@@ -43,7 +51,6 @@ def login(
         else None
     )
 
-    # Platform Super Admin login
     if not company_code:
         user = db.query(User).filter(
             User.username == username,
@@ -51,9 +58,7 @@ def login(
             User.company_id.is_(None),
             User.is_active.is_(True),
         ).first()
-
     else:
-        # Company login
         company = db.query(Company).filter(
             func.upper(Company.company_code) == company_code,
             Company.is_active.is_(True),
@@ -62,7 +67,7 @@ def login(
 
         if not company:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=401,
                 detail="Invalid company code or login details",
             )
 
@@ -78,11 +83,10 @@ def login(
         user.password_hash,
     ):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Invalid username or password",
         )
 
-    # Update last login time
     user.last_login = datetime.now(timezone.utc)
     db.commit()
 
@@ -95,7 +99,80 @@ def login(
 
     return LoginResponse(
         access_token=access_token,
-        token_type="bearer",
         role=user.role,
-        expires_in_minutes=30,
     )
+
+
+@router.post("/bootstrap-super-admin", status_code=201)
+def bootstrap_super_admin(
+    request: BootstrapAdminRequest,
+    db: Session = Depends(get_db),
+):
+    configured_key = os.getenv("ADMIN_BOOTSTRAP_KEY")
+
+    if not configured_key or len(configured_key) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin bootstrap is not configured",
+        )
+
+    if not secrets.compare_digest(
+        request.bootstrap_key,
+        configured_key,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid bootstrap key",
+        )
+
+    existing_admin = db.query(User).filter(
+        func.lower(User.role) == "platform_super_admin"
+    ).first()
+
+    if existing_admin:
+        raise HTTPException(
+            status_code=409,
+            detail="Platform Super Admin already exists",
+        )
+
+    username = request.username.strip()
+
+    existing_username = db.query(User).filter(
+        User.username == username
+    ).first()
+
+    if existing_username:
+        raise HTTPException(
+            status_code=409,
+            detail="Username is already in use",
+        )
+
+    admin = User(
+        username=username,
+        email=None,
+        password_hash=hash_password(request.password),
+        role="platform_super_admin",
+        company_id=None,
+        workflow_id=None,
+        is_active=True,
+        must_change_password=True,
+    )
+
+    try:
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not create Platform Super Admin",
+        )
+
+    return {
+        "status": "created",
+        "message": "Platform Super Admin created successfully",
+        "user_id": admin.id,
+        "username": admin.username,
+        "role": admin.role,
+    }
