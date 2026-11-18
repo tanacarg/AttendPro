@@ -17,6 +17,7 @@ PERMISSIONS = {
         "company:deactivate",
         "company:branding",
     },
+
     Role.COMPANY_ADMIN: {
         "company:view",
         "company:manage",
@@ -30,6 +31,7 @@ PERMISSIONS = {
         "project:manage",
         "report:view",
     },
+
     Role.WORKFLOW_ADMIN: {
         "workflow:view_assigned",
         "worker:view_assigned",
@@ -39,6 +41,7 @@ PERMISSIONS = {
         "project:view_assigned",
         "report:view_assigned",
     },
+
     Role.WORKER: {
         "attendance:submit_own",
         "attendance:view_own",
@@ -48,10 +51,25 @@ PERMISSIONS = {
 }
 
 
-def has_permission(role: Role, permission: str) -> bool:
-    return permission in PERMISSIONS.get(role, set())
+def normalize_role(role):
+    if isinstance(role, Role):
+        role = role.value
+
+    return str(role).strip().lower()
 
 
-def require_permission(role: Role, permission: str):
+def has_permission(role, permission):
+    normalized_role = normalize_role(role)
+
+    for defined_role, permissions in PERMISSIONS.items():
+        if defined_role.value == normalized_role:
+            return permission in permissions
+
+    return False
+
+
+def require_permission(role, permission):
     if not has_permission(role, permission):
-        raise PermissionError("You are not authorized to perform this action.")
+        raise PermissionError(
+            f"Role '{normalize_role(role)}' does not have permission '{permission}'"
+        )
