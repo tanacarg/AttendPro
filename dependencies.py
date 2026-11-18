@@ -12,6 +12,14 @@ from models import Company
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def normalize_role(role):
+    """Normalize role names without changing existing database values."""
+    if hasattr(role, "value"):
+        role = role.value
+
+    return str(role).strip().lower()
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
@@ -40,7 +48,7 @@ def get_current_user(
         raise unauthorized
 
     # Confirm token scope still matches the database account.
-    if payload.get("role") != user.role:
+    if normalize_role(payload.get("role")) != normalize_role(user.role):
         raise unauthorized
 
     if payload.get("company_id") != user.company_id:
@@ -50,9 +58,10 @@ def get_current_user(
         raise unauthorized
 
     # Platform Super Admin is not attached to a company.
-    if user.role == "PLATFORM_SUPER_ADMIN":
+    if normalize_role(user.role) == "platform_super_admin":
         if user.company_id is not None:
             raise unauthorized
+
     else:
         if user.company_id is None:
             raise unauthorized
@@ -73,10 +82,14 @@ def get_current_user(
 
 
 def require_roles(*allowed_roles):
+    normalized_allowed_roles = {
+        normalize_role(role) for role in allowed_roles
+    }
+
     def role_checker(
         current_user: User = Depends(get_current_user),
     ):
-        if current_user.role not in allowed_roles:
+        if normalize_role(current_user.role) not in normalized_allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission for this action",
