@@ -3,7 +3,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -39,12 +39,19 @@ class BootstrapAdminRequest(BaseModel):
     bootstrap_key: str = Field(..., min_length=32)
 
 
+class ResetSuperAdminPasswordRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=100)
+    new_password: str = Field(..., min_length=12)
+    recovery_key: str = Field(..., min_length=32)
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     request: LoginRequest,
     db: Session = Depends(get_db),
 ):
     username = request.username.strip()
+
     company_code = (
         request.company_code.strip().upper()
         if request.company_code
@@ -58,6 +65,7 @@ def login(
             User.company_id.is_(None),
             User.is_active.is_(True),
         ).first()
+
     else:
         company = db.query(Company).filter(
             func.upper(Company.company_code) == company_code,
@@ -162,6 +170,7 @@ def bootstrap_super_admin(
         db.add(admin)
         db.commit()
         db.refresh(admin)
+
     except Exception:
         db.rollback()
         raise HTTPException(
@@ -175,4 +184,57 @@ def bootstrap_super_admin(
         "user_id": admin.id,
         "username": admin.username,
         "role": admin.role,
+    }
+
+
+@router.post("/reset-super-admin-password")
+def reset_super_admin_password(
+    request: ResetSuperAdminPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    configured_key = os.getenv("ADMIN_PASSWORD_RESET_KEY")
+
+    if not configured_key or len(configured_key) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Password reset is not configured",
+        )
+
+    if not secrets.compare_digest(
+        request.recovery_key,
+        configured_key,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid recovery key",
+        )
+
+    admin = db.query(User).filter(
+        User.username == request.username.strip(),
+        func.lower(User.role) == "platform_super_admin",
+        User.company_id.is_(None),
+        User.is_active.is_(True),
+    ).first()
+
+    if not admin:
+        raise HTTPException(
+            status_code=404,
+            detail="Super Admin not found",
+        )
+
+    try:
+        admin.password_hash = hash_password(request.new_password)
+        admin.must_change_password = True
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not reset Super Admin password",
+        )
+
+    return {
+        "status": "success",
+        "message": "Super Admin password reset successfully",
     }
