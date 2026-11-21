@@ -24,6 +24,9 @@ app = FastAPI(
     description="Smart Workforce & Attendance Management System",
     version="1.0.0",
     lifespan=lifespan,
+    swagger_ui_parameters={
+        "persistAuthorization": True
+    },
 )
 
 # Register existing API routers
