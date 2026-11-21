@@ -8,7 +8,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import init_db, engine
-
 from companies import router as companies_router
 from login import router as auth_router
 from employees import router as employees_router
@@ -16,7 +15,6 @@ from employees import router as employees_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables
     init_db()
     yield
 
