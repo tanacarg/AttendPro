@@ -1,5 +1,4 @@
 
-import os
 import logging
 
 from telegram import (
@@ -7,28 +6,27 @@ from telegram import (
     ReplyKeyboardMarkup,
     KeyboardButton,
 )
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import ContextTypes
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# --------------------------------------------------
+# ATTENDPRO MAIN REPLY KEYBOARD
+# --------------------------------------------------
 
-# AttendPro main menu
 MAIN_MENU = [
-    [KeyboardButton("🏢 ድርጅት ምዝገባ")],
-    [KeyboardButton("👷 ሠራተኛ ምዝገባ")],
+    [
+        KeyboardButton("🏢 ድርጅት ምዝገባ"),
+    ],
+    [
+        KeyboardButton("👷 ሠራተኛ ምዝገባ"),
+    ],
     [
         KeyboardButton("🕘 Attendance"),
         KeyboardButton("📍 GPS ክትትል"),
@@ -47,8 +45,13 @@ MENU_MARKUP = ReplyKeyboardMarkup(
     MAIN_MENU,
     resize_keyboard=True,
     is_persistent=True,
+    input_field_placeholder="የAttendPro አገልግሎት ይምረጡ",
 )
 
+
+# --------------------------------------------------
+# START COMMAND
+# --------------------------------------------------
 
 async def start(
     update: Update,
@@ -57,14 +60,24 @@ async def start(
     if not update.message:
         return
 
+    user = update.effective_user
+
+    first_name = (
+        user.first_name
+        if user and user.first_name
+        else "ደንበኛ"
+    )
+
     message = (
-        "👋 እንኳን ወደ AttendPro በደህና መጡ!\n\n"
+        f"👋 ሰላም {first_name}!\n\n"
+        "እንኳን ወደ AttendPro በደህና መጡ!\n\n"
         "🏢 Smart Workforce & Attendance "
         "Management System\n\n"
-        "የሠራተኛ ምዝገባ፣ Attendance፣ "
-        "GPS ክትትል እና የሥራ አስተዳደር "
-        "አገልግሎቶችን ከታች ባሉት ምናሌዎች "
-        "ይምረጡ።"
+        "AttendPro የድርጅት፣ የሠራተኛ፣ "
+        "የመገኘት እና የሥራ አስተዳደር "
+        "ስርዓት ነው።\n\n"
+        "📌 ለመቀጠል ከታች ያሉትን "
+        "ቋሚ ምናሌዎች ይጠቀሙ።"
     )
 
     await update.message.reply_text(
@@ -72,6 +85,15 @@ async def start(
         reply_markup=MENU_MARKUP,
     )
 
+    logger.info(
+        "Start command used by user ID: %s",
+        user.id if user else "Unknown",
+    )
+
+
+# --------------------------------------------------
+# HELP COMMAND
+# --------------------------------------------------
 
 async def help_command(
     update: Update,
@@ -80,110 +102,108 @@ async def help_command(
     if not update.message:
         return
 
-    await update.message.reply_text(
-        "ℹ️ AttendPro Help\n\n"
+    message = (
+        "ℹ️ AttendPro የእገዛ መረጃ\n\n"
+        "🏢 ድርጅት ምዝገባ - ድርጅት ለመመዝገብ\n"
+        "👷 ሠራተኛ ምዝገባ - ሠራተኛ ለመመዝገብ\n"
+        "🕘 Attendance - የመገኘት መዝገብ\n"
+        "📍 GPS ክትትል - የሥራ ቦታ ክትትል\n"
+        "📋 የሥራ ፕሮጀክቶች - የፕሮጀክት አስተዳደር\n"
+        "📊 ሪፖርቶች - የሥራ ሪፖርቶች\n"
+        "⚙️ አስተዳደር - የአስተዳደር አገልግሎቶች\n\n"
         "/start - ዋና ምናሌ\n"
-        "/help - የእገዛ መረጃ",
+        "/help - የእገዛ መረጃ"
+    )
+
+    await update.message.reply_text(
+        message,
         reply_markup=MENU_MARKUP,
     )
 
+
+# --------------------------------------------------
+# REPLY KEYBOARD MENU HANDLER
+# --------------------------------------------------
 
 async def menu_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
 
     selected = update.message.text
 
+    if not selected:
+        return
+
     menu_responses = {
-        "🏢 ድርጅት ምዝገባ":
+        "🏢 ድርጅት ምዝገባ": (
             "🏢 የድርጅት ምዝገባ\n\n"
-            "ይህ ክፍል ከድርጅት ምዝገባ Backend "
-            "ጋር በቀጣይ ይገናኛል።",
+            "የድርጅት ምዝገባ ቅጽ በቀጣይ "
+            "ከAttendPro Backend API ጋር ይገናኛል።"
+        ),
 
-        "👷 ሠራተኛ ምዝገባ":
+        "👷 ሠራተኛ ምዝገባ": (
             "👷 የሠራተኛ ምዝገባ\n\n"
-            "ይህ ክፍል ከEmployee API ጋር "
-            "በቀጣይ ይገናኛል።",
+            "የሠራተኛ ምዝገባ ቅጽ በቀጣይ "
+            "ከEmployee API ጋር ይገናኛል።"
+        ),
 
-        "🕘 Attendance":
+        "🕘 Attendance": (
             "🕘 Attendance\n\n"
-            "የሠራተኛ መገኘት መዝገብ ክፍል "
-            "በቀጣይ ይዘጋጃል።",
+            "የሠራተኛ መገኘት መዝገብ "
+            "ክፍል በቀጣይ ከAttendance "
+            "ስርዓት ጋር ይገናኛል።"
+        ),
 
-        "📍 GPS ክትትል":
+        "📍 GPS ክትትል": (
             "📍 GPS ክትትል\n\n"
             "የሥራ ቦታ እና የመገኛ ቦታ "
-            "ክትትል ክፍል በቀጣይ ይዘጋጃል።",
+            "ክትትል ክፍል በቀጣይ ይገናኛል።"
+        ),
 
-        "📋 የሥራ ፕሮጀክቶች":
+        "📋 የሥራ ፕሮጀክቶች": (
             "📋 የሥራ ፕሮጀክቶች\n\n"
             "የፕሮጀክት ምዝገባና አስተዳደር "
-            "ክፍል በቀጣይ ይዘጋጃል።",
+            "ክፍል በቀጣይ ይገናኛል።"
+        ),
 
-        "📊 ሪፖርቶች":
+        "📊 ሪፖርቶች": (
             "📊 ሪፖርቶች\n\n"
             "የAttendance እና የሠራተኞች "
-            "ሪፖርት ክፍል በቀጣይ ይዘጋጃል።",
+            "ሪፖርት ክፍል በቀጣይ ይገናኛል።"
+        ),
 
-        "⚙️ አስተዳደር":
+        "⚙️ አስተዳደር": (
             "⚙️ የአስተዳደር ክፍል\n\n"
-            "የአስተዳዳሪ ፈቃድና የድርጅት "
-            "ቅንብሮች በቀጣይ ይዘጋጃሉ።",
+            "ይህ ክፍል የአስተዳዳሪ ፈቃድ "
+            "እና የድርጅት ቅንብሮችን "
+            "በቀጣይ ይይዛል።"
+        ),
 
-        "ℹ️ እገዛ":
-            "ℹ️ AttendPro Help\n\n"
+        "ℹ️ እገዛ": (
+            "ℹ️ AttendPro የእገዛ ክፍል\n\n"
+            "ለመመሪያ የሚከተለውን ይጠቀሙ፦\n"
             "/start - ዋና ምናሌ\n"
-            "/help - የእገዛ መረጃ",
+            "/help - የእገዛ መረጃ"
+        ),
     }
 
     response = menu_responses.get(selected)
 
-    if response:
-        await update.message.reply_text(
-            response,
-            reply_markup=MENU_MARKUP,
-        )
+    if response is None:
+        return
 
+    await update.message.reply_text(
+        response,
+        reply_markup=MENU_MARKUP,
+    )
 
-async def post_init(app: Application):
-    bot_info = await app.bot.get_me()
+    user = update.effective_user
+
     logger.info(
-        "AttendPro Bot started successfully: @%s",
-        bot_info.username,
+        "Menu selected: %s | User ID: %s",
+        selected,
+        user.id if user else "Unknown",
     )
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is missing."
-        )
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            menu_handler,
-        )
-    )
-
-    logger.info("AttendPro Bot handlers configured.")
-
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-
-if __name__ == "__main__":
-    main()
