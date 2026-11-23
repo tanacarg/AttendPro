@@ -14,6 +14,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    ContextTypes,
     filters,
 )
 
@@ -34,7 +35,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("AttendPro")
 
 
 # --------------------------------------------------
@@ -45,9 +46,21 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
-
-# Telegram application
 telegram_app = None
+
+
+# --------------------------------------------------
+# TELEGRAM ERROR HANDLER
+# --------------------------------------------------
+
+async def telegram_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    logger.error(
+        "Telegram update processing error",
+        exc_info=context.error,
+    )
 
 
 # --------------------------------------------------
@@ -62,23 +75,17 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("AttendPro database initialized.")
 
-    # Check required environment variables
+    # Validate environment variables
     if not BOT_TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is missing."
-        )
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is missing.")
 
     if not WEBHOOK_URL:
-        raise RuntimeError(
-            "WEBHOOK_URL is missing."
-        )
+        raise RuntimeError("WEBHOOK_URL is missing.")
 
     if not WEBHOOK_SECRET:
-        raise RuntimeError(
-            "WEBHOOK_SECRET is missing."
-        )
+        raise RuntimeError("WEBHOOK_SECRET is missing.")
 
-    # Create Telegram application
+    # Build Telegram application
     telegram_app = (
         Application.builder()
         .token(BOT_TOKEN)
@@ -86,69 +93,83 @@ async def lifespan(app: FastAPI):
         .build()
     )
 
-    # Register Telegram command handlers
-    telegram_app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    telegram_app.add_handler(
-        CommandHandler("help", help_command)
-    )
-
-    # Register persistent Reply Keyboard menu handler
-    telegram_app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            menu_handler,
-        )
-    )
-
-    # Start Telegram application
-    await telegram_app.initialize()
-    await telegram_app.start()
-
-    # Configure Telegram webhook
-    webhook_address = (
-        f"{WEBHOOK_URL}/telegram/webhook"
-    )
-
-    await telegram_app.bot.set_webhook(
-        url=webhook_address,
-        secret_token=WEBHOOK_SECRET,
-        allowed_updates=Update.ALL_TYPES,
-    )
-
-    # Verify bot identity
-    bot_info = await telegram_app.bot.get_me()
-
-    logger.info(
-        "AttendPro Telegram Bot is active: @%s",
-        bot_info.username,
-    )
-
-    logger.info(
-        "Webhook configured successfully."
-    )
-
     try:
+        # Register commands
+        telegram_app.add_handler(
+            CommandHandler("start", start)
+        )
+
+        telegram_app.add_handler(
+            CommandHandler("help", help_command)
+        )
+
+        # Register menu text handler
+        telegram_app.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                menu_handler,
+            )
+        )
+
+        # Register error handler
+        telegram_app.add_error_handler(
+            telegram_error_handler
+        )
+
+        # Initialize and start Telegram application
+        await telegram_app.initialize()
+        await telegram_app.start()
+
+        # Configure webhook
+        webhook_address = (
+            f"{WEBHOOK_URL}/telegram/webhook"
+        )
+
+        await telegram_app.bot.set_webhook(
+            url=webhook_address,
+            secret_token=WEBHOOK_SECRET,
+            allowed_updates=Update.ALL_TYPES,
+        )
+
+        # Verify bot identity
+        bot_info = await telegram_app.bot.get_me()
+
+        logger.info(
+            "AttendPro Telegram Bot is active: @%s",
+            bot_info.username,
+        )
+
+        logger.info("Webhook configured successfully.")
+
         yield
 
+    except Exception:
+        logger.exception(
+            "AttendPro startup or runtime error."
+        )
+        raise
+
     finally:
-        # Graceful shutdown
-        if telegram_app:
+        # Stop the application but preserve the webhook.
+        # Telegram can retain updates while the service restarts.
+        if telegram_app is not None:
             try:
-                await telegram_app.bot.delete_webhook()
-                await telegram_app.stop()
+                if telegram_app.running:
+                    await telegram_app.stop()
+
                 await telegram_app.shutdown()
 
                 logger.info(
-                    "AttendPro Telegram Bot stopped."
+                    "AttendPro Telegram application stopped."
                 )
 
             except Exception:
                 logger.exception(
-                    "Error while stopping Telegram Bot."
+                    "Error while stopping Telegram application."
                 )
+
+            finally:
+                telegram_app = None
 
 
 # --------------------------------------------------
@@ -160,7 +181,7 @@ app = FastAPI(
     description=(
         "Smart Workforce & Attendance Management System"
     ),
-    version="1.0.0",
+    version="1.0.1",
     lifespan=lifespan,
 )
 
@@ -195,8 +216,8 @@ async def telegram_webhook(
             detail="Invalid webhook secret",
         )
 
-    # Check Telegram application status
-    if telegram_app is None:
+    # Check bot readiness
+    if telegram_app is None or not telegram_app.running:
         raise HTTPException(
             status_code=503,
             detail="Telegram bot is not ready",
@@ -210,10 +231,12 @@ async def telegram_webhook(
             bot=telegram_app.bot,
         )
 
-        # Send update to Telegram application queue
         await telegram_app.update_queue.put(update)
 
         return {"ok": True}
+
+    except HTTPException:
+        raise
 
     except Exception:
         logger.exception(
@@ -289,12 +312,9 @@ def health():
 
 @app.get("/health/db")
 def database_health():
-
     try:
         with engine.connect() as connection:
-            connection.execute(
-                text("SELECT 1")
-            )
+            connection.execute(text("SELECT 1"))
 
         return {
             "status": "connected",
@@ -305,21 +325,14 @@ def database_health():
         }
 
     except SQLAlchemyError:
-
         logger.exception(
             "Database health check failed."
         )
 
-        return {
-            "status": "error",
-            "database": "connection_failed",
-            "message": (
-                "Database connection could not be verified."
-            ),
-            "timestamp": datetime.now(
-                timezone.utc
-            ).isoformat(),
-        }
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection could not be verified.",
+        )
 
 
 # --------------------------------------------------
@@ -330,5 +343,5 @@ def database_health():
 def api_home():
     return {
         "message": "Welcome to AttendPro API",
-        "version": "1.0.0",
+        "version": "1.0.1",
     }
