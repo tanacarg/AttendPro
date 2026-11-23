@@ -1,7 +1,7 @@
 
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
@@ -61,4 +61,33 @@ def init_db():
     import users
     import audit
 
+    # Create tables that do not exist yet.
     Base.metadata.create_all(bind=engine)
+
+    # Safely add Telegram account linking column to existing users table.
+    inspector = inspect(engine)
+
+    if "users" not in inspector.get_table_names():
+        raise RuntimeError("Users table was not created")
+
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("users")
+    }
+
+    with engine.begin() as connection:
+        if "telegram_user_id" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE users "
+                    "ADD COLUMN telegram_user_id VARCHAR(40)"
+                )
+            )
+
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ix_users_telegram_user_id "
+                "ON users (telegram_user_id)"
+            )
+        )
